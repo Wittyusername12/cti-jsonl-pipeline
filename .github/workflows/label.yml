@@ -63,7 +63,7 @@ jobs:
       - name: Full metrics (LABEL)
         shell: pwsh
         run: |
-          py metrics_top1.py --top1_csv top1_eval.csv `
+          py metrics_top1.py --top1_csv ce_top1_final_LABEL_metrics.csv `
                              --gold_jsonl gold_eval.jsonl `
                              --out metrics_unbalanced_p1_label_final.txt
           Get-Content metrics_unbalanced_p1_label_final.txt
