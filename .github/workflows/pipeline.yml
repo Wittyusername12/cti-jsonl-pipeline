@@ -1,0 +1,92 @@
+name: metrics-id-final
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+jobs:
+  id-final:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # 1) Fail-fast canonicalization (ID mode)
+      - name: Preflight (ID mode)
+        shell: pwsh
+        run: |
+          py preflight.py --mode id `
+            --top1 ce_top1_final_ID.csv `
+            --gold gold_id_unbalanced_nobom.jsonl `
+            --out-csv top1_eval.csv `
+            --out-gold gold_eval.jsonl `
+            --overlap-floor 10
+
+      # 2) Micro-eval (sample 50) – cheap gate
+      - name: Micro-eval
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv sample50_eval.csv `
+                             --gold_jsonl gold_eval.jsonl `
+                             --out micro_metrics.txt
+          Get-Content micro_metrics.txt
+
+      - name: Assert micro P@1 >= 0.10
+        shell: pwsh
+        run: |
+          $t = Get-Content micro_metrics.txt -Raw
+          $m = [regex]::Match($t, 'P@1 \(overall\):\s*([0-9.]+)')
+          if (-not $m.Success) { throw "Could not parse P@1 from micro metrics." }
+          $p = [double]$m.Groups[1].Value
+          "Micro P@1=$p"
+          if ($p -lt 0.10) { throw "Micro P@1 $p < 0.10; aborting full run." }
+
+      # 3) Full eval on canonical files
+      - name: Full metrics (ID)
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv top1_eval.csv `
+                             --gold_jsonl gold_eval.jsonl `
+                             --out metrics_unbalanced_p1_id_final.txt
+          Get-Content metrics_unbalanced_p1_id_final.txt
+
+      # 4) Misses report
+      - name: Misses Top 40
+        shell: pwsh
+        run: |
+          py misses_report.py --top1_csv top1_eval.csv `
+                              --gold_jsonl gold_eval.jsonl `
+                              --out_csv debug_misses_top40.csv `
+                              --k 40 `
+                              --p_col p_relevant `
+                              --pirr_col p_irrelevant
+
+      # 5) Assert floor so green != junk
+      - name: Assert P@1 >= 0.10
+        shell: pwsh
+        run: |
+          $txt = Get-Content metrics_unbalanced_p1_id_final.txt -Raw
+          $m = [regex]::Match($txt, 'P@1 \(overall\):\s*([0-9.]+)')
+          if (-not $m.Success) { throw "Could not parse P@1 from metrics." }
+          $p1 = [double]$m.Groups[1].Value
+          "Parsed P@1 = $p1"
+          if ($p1 -lt 0.10) { throw "P@1 $p1 < 0.10 threshold" }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: id-final-artifacts
+          path: |
+            manifest.json
+            sample50_eval.csv
+            top1_eval.csv
+            gold_eval.jsonl
+            micro_metrics.txt
+            metrics_unbalanced_p1_id_final.txt
+            debug_misses_top40.csv
