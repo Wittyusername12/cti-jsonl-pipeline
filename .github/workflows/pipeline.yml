@@ -2,8 +2,7 @@ name: metrics-id-final
 
 on:
   workflow_dispatch: {}
-  push:
-    branches: [ main ]
+  
 
 jobs:
   id-final:
