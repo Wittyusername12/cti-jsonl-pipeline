@@ -9,6 +9,7 @@ jobs:
   id-final:
     runs-on: windows-latest
     timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,39 +27,30 @@ jobs:
             --out-csv top1_eval.csv `
             --out-gold gold_eval.jsonl
 
-      # 2) Deterministic micro sample (n=200, seed=42)
-      - name: Make deterministic micro sample (n=200, seed=42)
+      # 2) Deterministic micro sample (n=200) in pure PowerShell
+      - name: Make deterministic micro sample (n=200)
         shell: pwsh
         run: |
-          python - << 'PY'
-          import csv, json
-          from pathlib import Path
-          qset=set()
-          with open('gold_eval.jsonl', encoding='utf-8') as f:
-              for line in f:
-                  if line.strip():
-                      o=json.loads(line); q=o.get('query','').strip()
-                      if q: qset.add(q)
-          rows=[]
-          with open('top1_eval.csv', newline='', encoding='utf-8') as f:
-              r=csv.DictReader(f)
-              for row in r:
-                  if row.get('query','') in qset:
-                      rows.append({'query':row['query'], 'candidate':row['candidate']})
-          rows = rows[:200]
-          with open('sample200_eval.csv','w',newline='',encoding='utf-8') as f:
-              w=csv.DictWriter(f, fieldnames=['query','candidate'])
-              w.writeheader(); w.writerows(rows)
-          print(f"Wrote sample200_eval.csv with {len(rows)} rows")
-          PY
+          $goldMap = @{}
+          Get-Content gold_eval.jsonl | ForEach-Object {
+            if ($_ -and $_.Trim()) {
+              $o = $_ | ConvertFrom-Json
+              if ($o.query) { $goldMap[$o.query.Trim()] = 1 }
+            }
+          }
+          $rows = Import-Csv top1_eval.csv
+          # Deterministic order: take first 200 rows whose query exists in gold
+          $sel = $rows | Where-Object { $goldMap.ContainsKey(($_.query)) } | Select-Object -First 200
+          $sel | Export-Csv -NoTypeInformation sample200_eval.csv
+          Write-Host "Wrote sample200_eval.csv with $($sel.Count) rows"
 
-      # 3) Micro-eval (warn-only)
+      # 3) Micro-eval (warn-only; never blocks the full run)
       - name: Micro-eval (warn-only)
         shell: pwsh
         run: |
           py metrics_top1.py --top1_csv sample200_eval.csv `
-            --gold_jsonl gold_eval.jsonl `
-            --out micro_metrics.txt
+                             --gold_jsonl gold_eval.jsonl `
+                             --out micro_metrics.txt
           $t = Get-Content micro_metrics.txt -Raw
           $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
           if($m.Success){
@@ -74,8 +66,9 @@ jobs:
         shell: pwsh
         run: |
           py metrics_top1.py --top1_csv top1_eval.csv `
-            --gold_jsonl gold_eval.jsonl `
-            --out metrics_unbalanced_p1_id_final.txt
+                             --gold_jsonl gold_eval.jsonl `
+                             --out metrics_unbalanced_p1_id_final.txt
+          Get-Content metrics_unbalanced_p1_id_final.txt
 
       # 5) Misses report (Top 40)
       - name: Misses Top 40
