@@ -1,0 +1,105 @@
+name: metrics-both-final
+
+on:
+  workflow_dispatch: {}   # manual only
+
+jobs:
+  both:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # ----- ID TRACK -----
+      - name: Preflight (ID)
+        shell: pwsh
+        run: |
+          py preflight.py --mode id `
+            --top1 ce_top1_final_ID.csv `
+            --gold gold_id_unbalanced_nobom.jsonl `
+            --out-csv top1_eval.csv `
+            --out-gold gold_eval.jsonl
+          Rename-Item top1_eval.csv top1_eval_id.csv -Force
+          Rename-Item gold_eval.jsonl gold_eval_id.jsonl -Force
+
+      - name: Micro (ID) warn-only
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv top1_eval_id.csv `
+                             --gold_jsonl gold_eval_id.jsonl `
+                             --out micro_id.txt
+          $t = Get-Content micro_id.txt -Raw
+          $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
+          if($m.Success){ "Micro ID P@1=" + $m.Groups[1].Value } else { "::warning::No micro ID parse" }
+
+      - name: Full metrics (ID)
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv top1_eval_id.csv `
+                             --gold_jsonl gold_eval_id.jsonl `
+                             --out metrics_id.txt
+          Get-Content metrics_id.txt
+
+      # ----- LABEL TRACK -----
+      - name: Preflight (LABEL)
+        shell: pwsh
+        run: |
+          py preflight.py --mode label `
+            --top1 ce_top1_final_LABEL_metrics.csv `
+            --gold gold_label_unbalanced_nobom.jsonl `
+            --out-csv top1_eval.csv `
+            --out-gold gold_eval.jsonl
+          Rename-Item top1_eval.csv top1_eval_label.csv -Force
+          Rename-Item gold_eval.jsonl gold_eval_label.jsonl -Force
+
+      - name: Micro (LABEL) warn-only
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv top1_eval_label.csv `
+                             --gold_jsonl gold_eval_label.jsonl `
+                             --out micro_label.txt
+          $t = Get-Content micro_label.txt -Raw
+          $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
+          if($m.Success){ "Micro LABEL P@1=" + $m.Groups[1].Value } else { "::warning::No micro LABEL parse" }
+
+      - name: Full metrics (LABEL)
+        shell: pwsh
+        run: |
+          py metrics_top1.py --top1_csv top1_eval_label.csv `
+                             --gold_jsonl gold_eval_label.jsonl `
+                             --out metrics_label.txt
+          Get-Content metrics_label.txt
+
+      # ----- SUMMARY (parse both and print/emit file) -----
+      - name: Summary (ID vs LABEL)
+        shell: pwsh
+        run: |
+          function Get-P1([string]$path){
+            $t = Get-Content $path -Raw
+            $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
+            if(-not $m.Success){ return "NA" }
+            return $m.Groups[1].Value
+          }
+          $p1_id    = Get-P1 "metrics_id.txt"
+          $p1_label = Get-P1 "metrics_label.txt"
+          "ID P@1    : $p1_id"    | Out-File both_summary.txt -Encoding utf8
+          "LABEL P@1 : $p1_label" | Out-File both_summary.txt -Append -Encoding utf8
+          Get-Content both_summary.txt
+
+      - name: Upload artifacts (both)
+        uses: actions/upload-artifact@v4
+        with:
+          name: both-artifacts
+          path: |
+            top1_eval_id.csv
+            gold_eval_id.jsonl
+            metrics_id.txt
+            micro_id.txt
+            top1_eval_label.csv
+            gold_eval_label.jsonl
+            metrics_label.txt
+            micro_label.txt
+            both_summary.txt
