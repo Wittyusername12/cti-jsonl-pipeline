@@ -14,16 +14,31 @@ jobs:
           python-version: '3.11'
 
       # ----- ID TRACK -----
-      - name: Preflight (ID)
-        shell: pwsh
-        run: |
-          py preflight.py --mode id `
-            --top1 ce_top1_final_ID.csv `
-            --gold gold_id_unbalanced_nobom.jsonl `
-            --out-csv top1_eval.csv `
-            --out-gold gold_eval.jsonl
-          Rename-Item top1_eval.csv top1_eval_id.csv -Force
-          Rename-Item gold_eval.jsonl gold_eval_id.jsonl -Force
+      - name: Build LABEL top1_eval + gold (deterministic; no auto-detect)
+  shell: pwsh
+  run: |
+    Write-Host "Preview of ce_top1_final_LABEL_metrics.csv:"
+    Get-Content .\ce_top1_final_LABEL_metrics.csv -First 2
+
+    # 1) Build top1_eval_label.csv with explicit columns
+    $rows = Import-Csv .\ce_top1_final_LABEL_metrics.csv
+    if (-not $rows) { throw "LABEL CSV has no rows." }
+
+    $out = foreach($r in $rows) {
+      # Expect exact columns: query, candidate, p_relevant
+      [pscustomobject]@{
+        q           = $r.query
+        d           = $r.candidate
+        p_relevant  = $r.p_relevant
+      }
+    }
+
+    $out | Export-Csv -NoTypeInformation .\top1_eval_label.csv
+    if (-not (Test-Path .\top1_eval_label.csv)) { throw "top1_eval_label.csv was not created." }
+
+    # 2) Copy the gold file
+    Copy-Item .\gold_label_unbalanced_nobom.jsonl .\gold_eval_label.jsonl -Force
+    if (-not (Test-Path .\gold_eval_label.jsonl)) { throw "gold_eval_label.jsonl was not created." }
 
       - name: Micro (ID) warn-only
         shell: pwsh
