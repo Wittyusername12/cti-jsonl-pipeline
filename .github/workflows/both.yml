@@ -52,7 +52,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # We need BOTH probs: p_relevant AND p_irrelevant
+          # Ensure both probabilities exist in the CSV we feed to metrics_top1.py
           $rows = Import-Csv .\ce_top1_final_LABEL_metrics.csv
           if (-not $rows) { throw "LABEL CSV has no rows." }
 
@@ -70,7 +70,7 @@ jobs:
           Write-Host "==== Preview top1_eval_label.csv ===="
           Get-Content .\top1_eval_label.csv -First 5
 
-          # gold for the same queries
+          # Gold for same queries
           Copy-Item .\gold_label_unbalanced_nobom.jsonl .\gold_eval_label.jsonl -Force
           if (!(Test-Path gold_eval_label.jsonl)) { throw "Missing gold_eval_label.jsonl" }
 
@@ -78,12 +78,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # Be explicit about column names so we don't rely on auto-detect
+          # IMPORTANT: your metrics_top1.py does NOT support --p_col / --pirr_col.
+          # It auto-detects columns like p_relevant/p and q/query and d/candidate.
           py metrics_top1.py --top1_csv top1_eval_label.csv `
             --gold_jsonl gold_eval_label.jsonl `
-            --out metrics_label.txt `
-            --p_col p_relevant `
-            --pirr_col p_irrelevant
+            --out metrics_label.txt
 
           if (-not (Test-Path metrics_label.txt)) {
             throw "metrics_label.txt was not created."
