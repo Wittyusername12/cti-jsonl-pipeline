@@ -18,58 +18,92 @@ jobs:
           python-version: '3.11'
 
       # ---------------- ID path ----------------
-      - name: Preflight (ID)
+      - name: Preflight (ID) → make top1_eval_id.csv + gold_eval_id.jsonl
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           py preflight.py --mode id `
             --top1 ce_top1_final_ID.csv `
             --gold gold_id_unbalanced_nobom.jsonl `
             --out-csv top1_eval_id.csv `
             --out-gold gold_eval_id.jsonl
+
           if (!(Test-Path top1_eval_id.csv))   { throw "Missing top1_eval_id.csv" }
           if (!(Test-Path gold_eval_id.jsonl)) { throw "Missing gold_eval_id.jsonl" }
 
       - name: Full metrics (ID)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           py metrics_top1.py --top1_csv top1_eval_id.csv `
             --gold_jsonl gold_eval_id.jsonl `
             --out metrics_id.txt
+
+          if (-not (Select-String -Path metrics_id.txt -Pattern 'P@1 \(overall\):')) {
+            Write-Host "==== metrics_id.txt (tail) ===="
+            Get-Content metrics_id.txt | Select-Object -Last 80
+            throw "ID metrics file does not contain P@1 line."
+          }
           Get-Content metrics_id.txt
 
       # --------------- LABEL path --------------
-      - name: Build LABEL top1_eval + gold (deterministic)
+      - name: Build LABEL top1_eval_label.csv + gold_eval_label.jsonl (deterministic)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
+          # We need BOTH probs: p_relevant AND p_irrelevant
           $rows = Import-Csv .\ce_top1_final_LABEL_metrics.csv
           if (-not $rows) { throw "LABEL CSV has no rows." }
 
           $out = foreach ($r in $rows) {
             [pscustomobject]@{
-              q          = $r.query
-              d          = $r.candidate
-              p_relevant = $r.p_relevant
+              q            = $r.query
+              d            = $r.candidate
+              p_relevant   = [double]$r.p_relevant
+              p_irrelevant = [double]$r.p_irrelevant
             }
           }
-
           $out | Export-Csv -NoTypeInformation .\top1_eval_label.csv
-          if (!(Test-Path top1_eval_label.csv)) { throw "Missing top1_eval_label.csv" }
 
+          if (!(Test-Path top1_eval_label.csv)) { throw "Missing top1_eval_label.csv" }
+          Write-Host "==== Preview top1_eval_label.csv ===="
+          Get-Content .\top1_eval_label.csv -First 5
+
+          # gold for the same queries
           Copy-Item .\gold_label_unbalanced_nobom.jsonl .\gold_eval_label.jsonl -Force
           if (!(Test-Path gold_eval_label.jsonl)) { throw "Missing gold_eval_label.jsonl" }
 
       - name: Full metrics (LABEL)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          # Be explicit about column names so we don't rely on auto-detect
           py metrics_top1.py --top1_csv top1_eval_label.csv `
             --gold_jsonl gold_eval_label.jsonl `
-            --out metrics_label.txt
+            --out metrics_label.txt `
+            --p_col p_relevant `
+            --pirr_col p_irrelevant
+
+          if (-not (Test-Path metrics_label.txt)) {
+            throw "metrics_label.txt was not created."
+          }
+
+          $hasP = Select-String -Path metrics_label.txt -Pattern 'P@1 \(overall\):'
+          if (-not $hasP) {
+            Write-Host "==== metrics_label.txt (tail) ===="
+            Get-Content metrics_label.txt | Select-Object -Last 120
+            Write-Host "==== Sample of top1_eval_label.csv ===="
+            Get-Content top1_eval_label.csv | Select-Object -First 10
+            throw "LABEL metrics file does not contain P@1 line."
+          }
           Get-Content metrics_label.txt
 
       # --------------- Summary -----------------
-      - name: Summary (ID vs LABEL)
+      - name: Summary (ID vs LABEL) → both_summary.txt
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           function Get-P1([string]$path){
             $t = Get-Content $path -Raw
             $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
@@ -78,6 +112,7 @@ jobs:
           }
           $p1_id    = Get-P1 "metrics_id.txt"
           $p1_label = Get-P1 "metrics_label.txt"
+
           "ID P@1    = $p1_id"    | Out-File both_summary.txt
           "LABEL P@1 = $p1_label" | Out-File both_summary.txt -Append
           Get-Content both_summary.txt
@@ -94,4 +129,3 @@ jobs:
             gold_eval_label.jsonl
             metrics_label.txt
             both_summary.txt
-
