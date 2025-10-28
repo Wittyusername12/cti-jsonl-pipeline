@@ -1,94 +1,72 @@
 name: metrics-both-final
 
 on:
-  workflow_dispatch: {}   # manual only
+  workflow_dispatch: {}
 
 jobs:
   both:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      # ----- ID TRACK -----
-      - name: Build LABEL top1_eval + gold (deterministic; no auto-detect)
-  shell: pwsh
-  run: |
-    Write-Host "Preview of ce_top1_final_LABEL_metrics.csv:"
-    Get-Content .\ce_top1_final_LABEL_metrics.csv -First 2
-
-    # 1) Build top1_eval_label.csv with explicit columns
-    $rows = Import-Csv .\ce_top1_final_LABEL_metrics.csv
-    if (-not $rows) { throw "LABEL CSV has no rows." }
-
-    $out = foreach($r in $rows) {
-      # Expect exact columns: query, candidate, p_relevant
-      [pscustomobject]@{
-        q           = $r.query
-        d           = $r.candidate
-        p_relevant  = $r.p_relevant
-      }
-    }
-
-    $out | Export-Csv -NoTypeInformation .\top1_eval_label.csv
-    if (-not (Test-Path .\top1_eval_label.csv)) { throw "top1_eval_label.csv was not created." }
-
-    # 2) Copy the gold file
-    Copy-Item .\gold_label_unbalanced_nobom.jsonl .\gold_eval_label.jsonl -Force
-    if (-not (Test-Path .\gold_eval_label.jsonl)) { throw "gold_eval_label.jsonl was not created." }
-
-      - name: Micro (ID) warn-only
+      # ---------------- ID path ----------------
+      - name: Preflight (ID)
         shell: pwsh
         run: |
-          py metrics_top1.py --top1_csv top1_eval_id.csv `
-                             --gold_jsonl gold_eval_id.jsonl `
-                             --out micro_id.txt
-          $t = Get-Content micro_id.txt -Raw
-          $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
-          if($m.Success){ "Micro ID P@1=" + $m.Groups[1].Value } else { "::warning::No micro ID parse" }
+          py preflight.py --mode id `
+            --top1 ce_top1_final_ID.csv `
+            --gold gold_id_unbalanced_nobom.jsonl `
+            --out-csv top1_eval_id.csv `
+            --out-gold gold_eval_id.jsonl
+          if (!(Test-Path top1_eval_id.csv))   { throw "Missing top1_eval_id.csv" }
+          if (!(Test-Path gold_eval_id.jsonl)) { throw "Missing gold_eval_id.jsonl" }
 
       - name: Full metrics (ID)
         shell: pwsh
         run: |
           py metrics_top1.py --top1_csv top1_eval_id.csv `
-                             --gold_jsonl gold_eval_id.jsonl `
-                             --out metrics_id.txt
+            --gold_jsonl gold_eval_id.jsonl `
+            --out metrics_id.txt
           Get-Content metrics_id.txt
 
-      # ----- LABEL TRACK -----
-      - name: Preflight (LABEL)
+      # --------------- LABEL path --------------
+      - name: Build LABEL top1_eval + gold (deterministic)
         shell: pwsh
         run: |
-          py preflight.py --mode label `
-            --top1 ce_top1_final_LABEL_metrics.csv `
-            --gold gold_label_unbalanced_nobom.jsonl `
-            --out-csv top1_eval.csv `
-            --out-gold gold_eval.jsonl
-          Rename-Item top1_eval.csv top1_eval_label.csv -Force
-          Rename-Item gold_eval.jsonl gold_eval_label.jsonl -Force
+          $rows = Import-Csv .\ce_top1_final_LABEL_metrics.csv
+          if (-not $rows) { throw "LABEL CSV has no rows." }
 
-      - name: Micro (LABEL) warn-only
-        shell: pwsh
-        run: |
-          py metrics_top1.py --top1_csv top1_eval_label.csv `
-                             --gold_jsonl gold_eval_label.jsonl `
-                             --out micro_label.txt
-          $t = Get-Content micro_label.txt -Raw
-          $m = [regex]::Match($t,'P@1 \(overall\):\s*([0-9.]+)')
-          if($m.Success){ "Micro LABEL P@1=" + $m.Groups[1].Value } else { "::warning::No micro LABEL parse" }
+          $out = foreach ($r in $rows) {
+            [pscustomobject]@{
+              q          = $r.query
+              d          = $r.candidate
+              p_relevant = $r.p_relevant
+            }
+          }
+
+          $out | Export-Csv -NoTypeInformation .\top1_eval_label.csv
+          if (!(Test-Path top1_eval_label.csv)) { throw "Missing top1_eval_label.csv" }
+
+          Copy-Item .\gold_label_unbalanced_nobom.jsonl .\gold_eval_label.jsonl -Force
+          if (!(Test-Path gold_eval_label.jsonl)) { throw "Missing gold_eval_label.jsonl" }
 
       - name: Full metrics (LABEL)
         shell: pwsh
         run: |
           py metrics_top1.py --top1_csv top1_eval_label.csv `
-                             --gold_jsonl gold_eval_label.jsonl `
-                             --out metrics_label.txt
+            --gold_jsonl gold_eval_label.jsonl `
+            --out metrics_label.txt
           Get-Content metrics_label.txt
 
-      # ----- SUMMARY (parse both and print/emit file) -----
+      # --------------- Summary -----------------
       - name: Summary (ID vs LABEL)
         shell: pwsh
         run: |
@@ -100,11 +78,11 @@ jobs:
           }
           $p1_id    = Get-P1 "metrics_id.txt"
           $p1_label = Get-P1 "metrics_label.txt"
-          "ID P@1    : $p1_id"    | Out-File both_summary.txt -Encoding utf8
-          "LABEL P@1 : $p1_label" | Out-File both_summary.txt -Append -Encoding utf8
+          "ID P@1    = $p1_id"    | Out-File both_summary.txt
+          "LABEL P@1 = $p1_label" | Out-File both_summary.txt -Append
           Get-Content both_summary.txt
 
-      - name: Upload artifacts (both)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: both-artifacts
@@ -112,9 +90,8 @@ jobs:
             top1_eval_id.csv
             gold_eval_id.jsonl
             metrics_id.txt
-            micro_id.txt
             top1_eval_label.csv
             gold_eval_label.jsonl
             metrics_label.txt
-            micro_label.txt
             both_summary.txt
+
